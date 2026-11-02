@@ -95,10 +95,10 @@ def load_metrics() -> dict:
     present = tuple(model for model in models if coverage[model] is not None)
     if present != INTERVAL_MODELS:
         raise SystemExit(f"unexpected quantile models: {present}")
-    # Guard against a swapped column. These are the published 1h figures.
-    if data["metrics"]["mae__1h"]["kumo_tabular"] != 296.3:
+    # Guard against a swapped column. These are the 1h and 24h figures as published on 2026-11-02.
+    if data["metrics"]["mae__1h"]["kumo_tabular"] != 276.9:
         raise SystemExit("MAE table does not match the published report")
-    if data["metrics"]["d2_pinball_score__24h__q_0.05"]["hgb_quantile_q7"] != 0.7789:
+    if data["metrics"]["d2_pinball_score__24h__q_0.05"]["hgb_quantile_q7"] != 0.7956:
         raise SystemExit("pinball D² table does not match the published report")
     return data
 
