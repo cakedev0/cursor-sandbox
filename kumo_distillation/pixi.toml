@@ -1,0 +1,20 @@
+[workspace]
+name = "kumo-distillation"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "3.12.*"
+pandoc = "*"
+
+[pypi-dependencies]
+# Upstream checkout of probabl-ai/skore-example-electricity-load, cloned by the
+# `clone-upstream` task (the package reads its datasets relative to its source tree).
+electricity-load-forecasting = { path = "upstream", editable = true }
+structured-data-models = { git = "https://github.com/NVIDIA/structured-data-models.git", rev = "78130b67d1712232c38089c54687b30b8b032ec6" }
+torch = ">=2.7"
+pyarrow = "*"
+matplotlib = "*"
+
+[tasks]
+clone-upstream = "test -d upstream || (git clone https://github.com/probabl-ai/skore-example-electricity-load.git upstream && git -C upstream checkout 2ef9e1cab09505e979e30eef90977c6ec7d736d1)"
