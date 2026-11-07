@@ -168,6 +168,37 @@ def cutmix(X, ratio, seed):
     return np.where(mask, X[a], X[b])
 
 
+def synthetic_queries(X, ratio, seed, generator="cutmix", feature_names=None):
+    """Synthetic teacher queries.
+
+    - ``cutmix``: ``cutmix`` above (independent features from two random rows);
+    - ``block``: CutMix on feature groups instead of single features (all the
+      load lags and rolling statistics, all the weather columns and all the
+      calendar columns each come from one of the two rows);
+    - ``local``: feature-wise CutMix of two rows at most 72 hours apart, which
+      stays closer to the data manifold of hourly time series.
+    """
+    if generator == "cutmix":
+        return cutmix(X, ratio, seed)
+    rng = np.random.default_rng(seed)
+    n_syn = int(round(ratio * X.shape[0]))
+    a = rng.integers(0, X.shape[0], size=n_syn)
+    if generator == "local":
+        offset = rng.integers(1, 73, size=n_syn) * rng.choice([-1, 1], size=n_syn)
+        b = np.clip(a + offset, 0, X.shape[0] - 1)
+        mask = rng.random((n_syn, X.shape[1])) < 0.5
+        return np.where(mask, X[a], X[b])
+    assert generator == "block", generator
+    b = rng.integers(0, X.shape[0], size=n_syn)
+    groups = np.array(
+        [n.split("_")[0] if n.split("_")[0] in ("lag", "weather", "cal") else n for n in feature_names]
+    )
+    names = np.unique(groups)
+    pick = rng.random((n_syn, len(names))) < 0.5
+    mask = pick[:, np.searchsorted(names, groups)]
+    return np.where(mask, X[a], X[b])
+
+
 def predictions_frame(fold_preds):
     """Assemble predictions in the upstream ``cross_validate_models.py`` format.
 

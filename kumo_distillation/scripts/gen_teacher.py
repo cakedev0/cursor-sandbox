@@ -6,7 +6,8 @@ arXiv:2610.01435) and predicts the 7 quantiles on:
 
 - the test rows (this is the ``kumo_tabular`` CV prediction),
 - the training rows themselves (whose labels are in the context),
-- ``--ratio`` x n_train CutMix synthetic rows (``folds.cutmix``, seeded by fold
+- ``--ratio`` x n_train synthetic rows (``folds.synthetic_queries``, CutMix by
+  default, seeded by fold
   and horizon, so the student scripts can regenerate the same inputs; the
   first r x n_train rows are a valid sample for any ratio r <= ``--ratio``).
 
@@ -33,6 +34,7 @@ parser.add_argument("--ratio", type=float, default=4)
 parser.add_argument("--folds", type=int, nargs="*", default=None)
 parser.add_argument("--horizons", type=int, nargs="*", default=folds.HORIZONS)
 parser.add_argument("--batch_size", type=int, default=8192)
+parser.add_argument("--generator", choices=["cutmix", "block", "local"], default="cutmix")
 args = parser.parse_args()
 args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -50,7 +52,9 @@ for fold in fold_list:
         if path.exists():
             continue
         d = folds.fold_data(fold, h)
-        X_syn = folds.cutmix(d["X_train"], args.ratio, seed=cutmix_seed(fold, h))
+        X_syn = folds.synthetic_queries(
+            d["X_train"], args.ratio, cutmix_seed(fold, h), args.generator, d["feature_names"]
+        )
         teacher = KumoTeacher(batch_size=args.batch_size, seed=fold * 100 + h)
         timings = {}
         t0 = time.perf_counter()
@@ -76,6 +80,7 @@ for fold in fold_list:
             "n_features": int(d["X_train"].shape[1]),
             "ratio": args.ratio,
             "cutmix_seed": cutmix_seed(fold, h),
+            "generator": args.generator,
             "quantiles": list(folds.QUANTILES),
             "timings": timings,
             "gpu": torch.cuda.get_device_name(),

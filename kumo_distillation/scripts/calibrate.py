@@ -34,6 +34,16 @@ parser.add_argument("all_folds", type=Path, nargs="+")
 parser.add_argument("--n_past_folds", type=int, default=4)
 parser.add_argument("--n_bins", type=int, default=10)
 parser.add_argument("--suffix", default="_recal")
+parser.add_argument(
+    "--method",
+    choices=["spline", "constant"],
+    default="spline",
+    help="spline: upstream Recalibrator shift (a function of the predicted value); "
+    "constant: one shift per quantile level (conformalized quantile regression)",
+)
+parser.add_argument(
+    "--keep_median", action="store_true", help="do not shift the median prediction"
+)
 args = parser.parse_args()
 
 GAP = datetime.timedelta(days=7)
@@ -57,7 +67,12 @@ def recalibrate(df):
             corrected = test.select(QCOLS).to_numpy().astype(float, copy=True)
             y = past["y"].to_numpy()
             for i, (col, q) in enumerate(zip(QCOLS, folds.QUANTILES)):
+                if args.keep_median and q == 0.5:
+                    continue
                 p = past[col].to_numpy()
+                if args.method == "constant":
+                    corrected[:, i] += np.quantile(y - p, q)
+                    continue
                 model, _ = shifter._fit_shift_model(p, y - p, q)
                 corrected[:, i] += model.predict(corrected[:, [i]])
             fit_times[fold] += time.perf_counter() - t0

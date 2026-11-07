@@ -39,7 +39,11 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 import folds
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--teacher_dir", type=Path, default=Path("results/raw/teacher_fc"))
+parser.add_argument(
+    "--teacher_dir",
+    type=Path,
+    default=Path(__file__).resolve().parents[1] / "results/raw/teacher_fc",
+)
 parser.add_argument("--output_dir", type=Path, required=True)
 parser.add_argument("--name", required=True)
 parser.add_argument(
@@ -109,7 +113,10 @@ def training_set(d, h):
     if args.oof_dir is None:
         teacher_time += tt["predict_train"]
     else:
-        z = np.load(args.oof_dir / f"fold{d['fold']}_h{h}.npz")
+        oof_path = args.oof_dir / f"fold{d['fold']}_h{h}.npz"
+        while args.wait and not oof_path.exists():
+            time.sleep(60)
+        z = np.load(oof_path)
         q_train = z["q_train"]
         oof_timings = json.loads(str(z["meta"]))["timings"]
         teacher_time += oof_timings["fit"] + oof_timings["predict_train"]
@@ -118,7 +125,13 @@ def training_set(d, h):
         teacher_time -= tt["fit"] if args.oof_dir is not None else 0.0
     X, T, w = [d["X_train"]], [q_train], [np.full(n, 1.0)]
     if n_syn:
-        X_syn = folds.cutmix(d["X_train"], meta["ratio"], seed=meta["cutmix_seed"])
+        X_syn = folds.synthetic_queries(
+            d["X_train"],
+            meta["ratio"],
+            meta["cutmix_seed"],
+            meta.get("generator", "cutmix"),
+            d["feature_names"],
+        )
         assert X_syn.shape[0] >= n_syn, "teacher was run with a smaller ratio"
         X.append(X_syn[:n_syn])
         T.append(teacher["q_syn"][:n_syn])
