@@ -1,0 +1,20 @@
+name: Publish Kumo-Tabular distillation report
+
+on:
+  pull_request:
+    paths:
+      - "kumo_distillation/journal/**"
+      - ".github/workflows/publish-kumo-distillation.yml"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+  pull-requests: write
+
+jobs:
+  report:
+    uses: ogrisel/cursor-sandbox/.github/workflows/publish-report.yml@main
+    with:
+      journal-path: kumo_distillation/journal
+      site-title: Distilling Kumo-Tabular into HistGradientBoosting quantile models
