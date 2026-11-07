@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>03-calibration</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<header>
+<nav>
+<a href="../index.html">Journal</a>
+
+</nav>
+</header>
+<main>
+<h1 id="03-post-hoc-calibration-on-top-of-distillation-intermediate">03: Post-hoc calibration on top of distillation (intermediate)</h1>
+<p>Goal: check whether recalibrating the quantiles after the fact helps the distilled students, the label-trained HGB, and the Kumo-Tabular teacher.</p>
+<p>Status: intermediate. This covers the paper-recipe student of <a href="../02-distillation/index.html">iteration 02</a>, the label-trained <code>hgb_q7 + lag diffs + residual</code> model, and the teacher. The students still running will be added later.</p>
+<h2 id="method">Method</h2>
+<p><code>scripts/calibrate.py</code> recalibrates outer fold k from the predictions of the 4 preceding walk-forward folds (k-4 to k-1, <code>folds.extended_splits</code> with <code>min_train_days=365</code>). It only uses their rows before the 7-day gap of fold k. Each of those models was trained on data that precedes its own test block, so no information from fold k leaks into the shift. This replaces the inner CV of the upstream <code>Recalibrator</code>, which would have to re-run the teacher 4 more times per fold. Four variants:</p>
+<ul>
+<li>spline recal: the upstream <code>Recalibrator._fit_shift_model</code> (10 bins of the predicted value, residual quantile per bin, spline + <code>RidgeCV</code>). It is fitted per quantile level and horizon and added to the predictions;</li>
+<li>constant shift: one shift per level, the empirical level-q quantile of the past residuals (conformalized quantile regression);</li>
+<li>median kept: the same two methods without shifting the 0.5 level.</li>
+</ul>
+<p>The 7 corrected levels are then sorted. When the shifts of the 0.25 and 0.75 levels are large, sorting can move them past the median, which is why some "median kept" rows still change the MAE.</p>
+<h2 id="results-8-evaluation-folds">Results (8 evaluation folds)</h2>
+<table>
+<thead>
+<tr class="header">
+<th>model</th>
+<th style="text-align: right;">MAE avg</th>
+<th style="text-align: right;">MAE 1h</th>
+<th style="text-align: right;">MAE 12h</th>
+<th style="text-align: right;">MAE 24h</th>
+<th style="text-align: right;">MAPE avg (%)</th>
+<th style="text-align: right;">pinball 5/50/95 avg</th>
+<th style="text-align: right;">pinball q7 avg</th>
+<th style="text-align: right;">d2 pinball avg</th>
+<th style="text-align: right;">cov 90 avg</th>
+<th style="text-align: right;">width 90 avg</th>
+<th style="text-align: right;">cov 50 avg</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>hgb_quantile_q7 (upstream)</td>
+<td style="text-align: right;">859</td>
+<td style="text-align: right;">534</td>
+<td style="text-align: right;">1001</td>
+<td style="text-align: right;">1042</td>
+<td style="text-align: right;">1.75</td>
+<td style="text-align: right;">244</td>
+<td style="text-align: right;">278</td>
+<td style="text-align: right;">0.8595</td>
+<td style="text-align: right;">0.766</td>
+<td style="text-align: right;">2987</td>
+<td style="text-align: right;">0.305</td>
+</tr>
+<tr class="even">
+<td>kumo_tabular_q7 (teacher run)</td>
+<td style="text-align: right;">686</td>
+<td style="text-align: right;">275</td>
+<td style="text-align: right;">827</td>
+<td style="text-align: right;">955</td>
+<td style="text-align: right;">1.40</td>
+<td style="text-align: right;">190</td>
+<td style="text-align: right;">213</td>
+<td style="text-align: right;">0.8918</td>
+<td style="text-align: right;">0.959</td>
+<td style="text-align: right;">4298</td>
+<td style="text-align: right;">0.594</td>
+</tr>
+<tr class="odd">
+<td>kumo_tabular_q7 + spline recal</td>
+<td style="text-align: right;">820</td>
+<td style="text-align: right;">291</td>
+<td style="text-align: right;">1009</td>
+<td style="text-align: right;">1158</td>
+<td style="text-align: right;">1.64</td>
+<td style="text-align: right;">212</td>
+<td style="text-align: right;">239</td>
+<td style="text-align: right;">0.8875</td>
+<td style="text-align: right;">0.859</td>
+<td style="text-align: right;">3209</td>
+<td style="text-align: right;">0.445</td>
+</tr>
+<tr class="even">
+<td>kumo_tabular_q7 + spline recal, median kept</td>
+<td style="text-align: right;">715</td>
+<td style="text-align: right;">276</td>
+<td style="text-align: right;">868</td>
+<td style="text-align: right;">1003</td>
+<td style="text-align: right;">1.45</td>
+<td style="text-align: right;">194</td>
+<td style="text-align: right;">227</td>
+<td style="text-align: right;">0.8920</td>
+<td style="text-align: right;">0.859</td>
+<td style="text-align: right;">3210</td>
+<td style="text-align: right;">0.460</td>
+</tr>
+<tr class="odd">
+<td>kumo_tabular_q7 + constant shift</td>
+<td style="text-align: right;">789</td>
+<td style="text-align: right;">284</td>
+<td style="text-align: right;">966</td>
+<td style="text-align: right;">1116</td>
+<td style="text-align: right;">1.61</td>
+<td style="text-align: right;">204</td>
+<td style="text-align: right;">229</td>
+<td style="text-align: right;">0.8906</td>
+<td style="text-align: right;">0.883</td>
+<td style="text-align: right;">3492</td>
+<td style="text-align: right;">0.469</td>
+</tr>
+<tr class="even">
+<td>kumo_tabular_q7 + constant shift, median kept</td>
+<td style="text-align: right;">698</td>
+<td style="text-align: right;">275</td>
+<td style="text-align: right;">842</td>
+<td style="text-align: right;">978</td>
+<td style="text-align: right;">1.43</td>
+<td style="text-align: right;">189</td>
+<td style="text-align: right;">220</td>
+<td style="text-align: right;">0.8945</td>
+<td style="text-align: right;">0.883</td>
+<td style="text-align: right;">3493</td>
+<td style="text-align: right;">0.488</td>
+</tr>
+<tr class="odd">
+<td>hgb_q7 + lag diffs + residual</td>
+<td style="text-align: right;">747</td>
+<td style="text-align: right;">320</td>
+<td style="text-align: right;">913</td>
+<td style="text-align: right;">1008</td>
+<td style="text-align: right;">1.51</td>
+<td style="text-align: right;">216</td>
+<td style="text-align: right;">245</td>
+<td style="text-align: right;">0.8742</td>
+<td style="text-align: right;">0.763</td>
+<td style="text-align: right;">2583</td>
+<td style="text-align: right;">0.297</td>
+</tr>
+<tr class="even">
+<td>hgb_q7 + lag diffs + residual + spline recal</td>
+<td style="text-align: right;">768</td>
+<td style="text-align: right;">320</td>
+<td style="text-align: right;">945</td>
+<td style="text-align: right;">1040</td>
+<td style="text-align: right;">1.55</td>
+<td style="text-align: right;">209</td>
+<td style="text-align: right;">233</td>
+<td style="text-align: right;">0.8845</td>
+<td style="text-align: right;">0.911</td>
+<td style="text-align: right;">3761</td>
+<td style="text-align: right;">0.520</td>
+</tr>
+<tr class="odd">
+<td>hgb_q7 + lag diffs + residual + spline recal, median kept</td>
+<td style="text-align: right;">747</td>
+<td style="text-align: right;">320</td>
+<td style="text-align: right;">913</td>
+<td style="text-align: right;">1008</td>
+<td style="text-align: right;">1.51</td>
+<td style="text-align: right;">205</td>
+<td style="text-align: right;">232</td>
+<td style="text-align: right;">0.8854</td>
+<td style="text-align: right;">0.911</td>
+<td style="text-align: right;">3761</td>
+<td style="text-align: right;">0.520</td>
+</tr>
+<tr class="even">
+<td>hgb_q7 + lag diffs + residual + constant shift</td>
+<td style="text-align: right;">764</td>
+<td style="text-align: right;">320</td>
+<td style="text-align: right;">936</td>
+<td style="text-align: right;">1034</td>
+<td style="text-align: right;">1.54</td>
+<td style="text-align: right;">209</td>
+<td style="text-align: right;">234</td>
+<td style="text-align: right;">0.8833</td>
+<td style="text-align: right;">0.913</td>
+<td style="text-align: right;">3759</td>
+<td style="text-align: right;">0.518</td>
+</tr>
+<tr class="odd">
+<td>hgb_q7 + lag diffs + residual + constant shift, median kept</td>
+<td style="text-align: right;">747</td>
+<td style="text-align: right;">320</td>
+<td style="text-align: right;">913</td>
+<td style="text-align: right;">1008</td>
+<td style="text-align: right;">1.51</td>
+<td style="text-align: right;">206</td>
+<td style="text-align: right;">233</td>
+<td style="text-align: right;">0.8840</td>
+<td style="text-align: right;">0.913</td>
+<td style="text-align: right;">3759</td>
+<td style="text-align: right;">0.518</td>
+</tr>
+<tr class="even">
+<td>KD CutMix 2:1 (paper recipe)</td>
+<td style="text-align: right;">847</td>
+<td style="text-align: right;">524</td>
+<td style="text-align: right;">969</td>
+<td style="text-align: right;">1049</td>
+<td style="text-align: right;">1.73</td>
+<td style="text-align: right;">241</td>
+<td style="text-align: right;">273</td>
+<td style="text-align: right;">0.8625</td>
+<td style="text-align: right;">0.719</td>
+<td style="text-align: right;">2584</td>
+<td style="text-align: right;">0.286</td>
+</tr>
+<tr class="odd">
+<td>KD CutMix 2:1 + spline recal</td>
+<td style="text-align: right;">956</td>
+<td style="text-align: right;">557</td>
+<td style="text-align: right;">1109</td>
+<td style="text-align: right;">1202</td>
+<td style="text-align: right;">1.92</td>
+<td style="text-align: right;">249</td>
+<td style="text-align: right;">279</td>
+<td style="text-align: right;">0.8672</td>
+<td style="text-align: right;">0.876</td>
+<td style="text-align: right;">3839</td>
+<td style="text-align: right;">0.465</td>
+</tr>
+<tr class="even">
+<td>KD CutMix 2:1 + spline recal, median kept</td>
+<td style="text-align: right;">861</td>
+<td style="text-align: right;">525</td>
+<td style="text-align: right;">990</td>
+<td style="text-align: right;">1067</td>
+<td style="text-align: right;">1.75</td>
+<td style="text-align: right;">234</td>
+<td style="text-align: right;">269</td>
+<td style="text-align: right;">0.8711</td>
+<td style="text-align: right;">0.876</td>
+<td style="text-align: right;">3839</td>
+<td style="text-align: right;">0.479</td>
+</tr>
+<tr class="odd">
+<td>KD CutMix 2:1 + constant shift</td>
+<td style="text-align: right;">937</td>
+<td style="text-align: right;">541</td>
+<td style="text-align: right;">1086</td>
+<td style="text-align: right;">1184</td>
+<td style="text-align: right;">1.91</td>
+<td style="text-align: right;">246</td>
+<td style="text-align: right;">275</td>
+<td style="text-align: right;">0.8676</td>
+<td style="text-align: right;">0.888</td>
+<td style="text-align: right;">3963</td>
+<td style="text-align: right;">0.477</td>
+</tr>
+<tr class="even">
+<td>KD CutMix 2:1 + constant shift, median kept</td>
+<td style="text-align: right;">852</td>
+<td style="text-align: right;">524</td>
+<td style="text-align: right;">976</td>
+<td style="text-align: right;">1055</td>
+<td style="text-align: right;">1.74</td>
+<td style="text-align: right;">232</td>
+<td style="text-align: right;">267</td>
+<td style="text-align: right;">0.8712</td>
+<td style="text-align: right;">0.888</td>
+<td style="text-align: right;">3963</td>
+<td style="text-align: right;">0.488</td>
+</tr>
+</tbody>
+</table>
+<p>The calibration fits take less than 1 s per fold.</p>
+<ul>
+<li>Never shift the median. Shifting it with past-fold residuals adds 17 to 134 MW of MAE for every model. The level of the load drifts between folds (seasons), so a past median bias does not carry over to the next 13 weeks.</li>
+<li>Leaving the median alone, calibration helps the under-covering HGB models. The 90% coverage goes from 0.72-0.76 to 0.88-0.91 and the q7 pinball loss drops by 4-6 MW for the KD student (273 to 267-269) and by 12-13 MW for <code>hgb_q7 + lag diffs + residual</code> (245 to 232).</li>
+<li>For the over-covering teacher, calibration narrows the intervals (90% coverage 0.96 to 0.86-0.88). It barely changes the 5/50/95 pinball loss (190 to 189-194) and worsens the q7 pinball loss (213 to 220-227). Calibrating Kumo-Tabular does not help on this problem.</li>
+<li>Calibration does not change the ranking. The best HGB model so far is the label-trained <code>hgb_q7 + lag diffs + residual + spline recal, median kept</code>: MAE 747 MW, q7 pinball 232 MW, 90% coverage 0.91. The calibrated paper-recipe student stays at 852-861 MW and 267-269 MW.</li>
+</ul>
+<p><img src="bars.png" alt="Absolute metrics by horizon" /></p>
+<p><img src="differences.png" alt="Paired differences vs hgb_quantile_q7" /></p>
+<p><img src="coverage_width.png" alt="Coverage vs width" /></p>
+<p><img src="reliability.png" alt="Reliability" /></p>
+<p><img src="pareto.png" alt="Accuracy vs fit + predict time" /></p>
+<p><img src="timeseries.png" alt="True vs predicted load, two weeks of January 2025" /></p>
+
+</main>
+</body>
+</html>

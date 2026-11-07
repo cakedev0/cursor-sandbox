@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>02-distillation</title>
+<link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+<header>
+<nav>
+<a href="../index.html">Journal</a>
+
+</nav>
+</header>
+<main>
+<h1 id="02-distilling-kumo-tabular-into-hgb-quantile-students-intermediate">02: Distilling Kumo-Tabular into HGB quantile students (intermediate)</h1>
+<p>Goal: fit one <code>HistGradientBoostingRegressor(loss="squared_error")</code> per quantile level (0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95) on the quantile predictions of the Kumo-Tabular teacher of <a href="../01-reproduction/index.html">iteration 01</a>, following the recipe of <a href="https://arxiv.org/html/2610.01435">arXiv:2610.01435</a>, and check how much of the gap between <code>hgb_quantile_q7</code> and <code>kumo_tabular</code> the students close.</p>
+<p>Status: intermediate. The paper recipe, the teacher diagnostics and the single-fold probes are complete. Several full CV runs were still going when this was written: real rows only, out-of-fold teacher targets, and the lag-difference features combined with distillation. They will be added in a later iteration.</p>
+<h2 id="setup">Setup</h2>
+<ul>
+<li>Teacher (<code>scripts/gen_teacher.py</code>, L4 GPU): for each of the 12 walk-forward folds (the 8 evaluation folds plus 4 earlier folds used only for calibration, see <a href="../03-calibration/index.html">iteration 03</a>) and each horizon, Kumo-Tabular (8 estimators, fp16, the full training set as context) predicts the 7 quantiles on the test rows, on the training rows, and on 4 x n_train CutMix queries (the students below use the first 2 x n_train).</li>
+<li>CutMix queries (<code>folds.cutmix</code>, paper appendix A): each feature of a synthetic row is copied, with probability 0.5, from one of two training rows drawn uniformly at random.</li>
+<li>Student (<code>scripts/distill.py</code>): one HGB per level, <code>squared_error</code> loss, learning rate 0.1, 31 leaves, <code>min_samples_leaf=20</code>, up to 3,000 iterations with early stopping (patience 100). Following the paper, the targets are the teacher quantiles only (alpha = 1, no ground-truth labels). The synthetic to real ratio is 2:1, and the real and synthetic groups get the same total weight. The 7 predictions are sorted to remove quantile crossings.</li>
+<li><code>hgb_q7 + lag diffs + residual</code> (<code>--supervision labels --residual --lag_diffs</code>) is a label-trained pinball-loss baseline that came out of the capacity probes. It appends the differences between consecutive hourly load lags and <code>lag_h - lag_{24,48,168}</code>, which axis-aligned trees cannot form, and regresses the target minus the load at prediction time (<code>lag_h</code>).</li>
+</ul>
+<h2 id="results-8-evaluation-folds">Results (8 evaluation folds)</h2>
+<table>
+<thead>
+<tr class="header">
+<th>model</th>
+<th style="text-align: right;">MAE avg</th>
+<th style="text-align: right;">MAE 1h</th>
+<th style="text-align: right;">MAE 12h</th>
+<th style="text-align: right;">MAE 24h</th>
+<th style="text-align: right;">MAPE avg (%)</th>
+<th style="text-align: right;">pinball 5/50/95 avg</th>
+<th style="text-align: right;">pinball q7 avg</th>
+<th style="text-align: right;">d2 pinball avg</th>
+<th style="text-align: right;">cov 90 avg</th>
+<th style="text-align: right;">width 90 avg</th>
+<th style="text-align: right;">cov 50 avg</th>
+<th style="text-align: right;">fit+predict (s)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>hgb_quantile_q7 (upstream)</td>
+<td style="text-align: right;">859</td>
+<td style="text-align: right;">534</td>
+<td style="text-align: right;">1001</td>
+<td style="text-align: right;">1042</td>
+<td style="text-align: right;">1.75</td>
+<td style="text-align: right;">244</td>
+<td style="text-align: right;">278</td>
+<td style="text-align: right;">0.8595</td>
+<td style="text-align: right;">0.766</td>
+<td style="text-align: right;">2987</td>
+<td style="text-align: right;">0.305</td>
+<td style="text-align: right;">1851</td>
+</tr>
+<tr class="even">
+<td>kumo_tabular_q7 (teacher run)</td>
+<td style="text-align: right;">686</td>
+<td style="text-align: right;">275</td>
+<td style="text-align: right;">827</td>
+<td style="text-align: right;">955</td>
+<td style="text-align: right;">1.40</td>
+<td style="text-align: right;">190</td>
+<td style="text-align: right;">213</td>
+<td style="text-align: right;">0.8918</td>
+<td style="text-align: right;">0.959</td>
+<td style="text-align: right;">4298</td>
+<td style="text-align: right;">0.594</td>
+<td style="text-align: right;">1255</td>
+</tr>
+<tr class="odd">
+<td>hgb_q7 + lag diffs + residual</td>
+<td style="text-align: right;">747</td>
+<td style="text-align: right;">320</td>
+<td style="text-align: right;">913</td>
+<td style="text-align: right;">1008</td>
+<td style="text-align: right;">1.51</td>
+<td style="text-align: right;">216</td>
+<td style="text-align: right;">245</td>
+<td style="text-align: right;">0.8742</td>
+<td style="text-align: right;">0.763</td>
+<td style="text-align: right;">2583</td>
+<td style="text-align: right;">0.297</td>
+<td style="text-align: right;">4336</td>
+</tr>
+<tr class="even">
+<td>KD CutMix 2:1 (paper recipe)</td>
+<td style="text-align: right;">847</td>
+<td style="text-align: right;">524</td>
+<td style="text-align: right;">969</td>
+<td style="text-align: right;">1049</td>
+<td style="text-align: right;">1.73</td>
+<td style="text-align: right;">241</td>
+<td style="text-align: right;">273</td>
+<td style="text-align: right;">0.8625</td>
+<td style="text-align: right;">0.719</td>
+<td style="text-align: right;">2584</td>
+<td style="text-align: right;">0.286</td>
+<td style="text-align: right;">10608</td>
+</tr>
+</tbody>
+</table>
+<p>The fit+predict time of the distilled student adds 4,108 s of L4 teacher time and 6,488 s of student fits on 4 vCPUs. The teacher time covers the fit plus the predictions on the training rows and on the 2 x n_train synthetic queries. All 7 x 24 student fits ran the full 3,000 iterations. Predicting the 8 test folds with the students takes 12 s in total.</p>
+<ul>
+<li>The paper recipe closes only 7% of the MAE gap between <code>hgb_quantile_q7</code> and the teacher (847 vs 859 and 686 MW). It gains 5 MW of q7 pinball loss (273 vs 278 MW), against 65 MW for the teacher. The paired bootstrap intervals of the MAE difference contain 0 at every horizon (1h: -10 MW, 95% interval [-21, 2]).</li>
+<li>The students under-cover more than <code>hgb_quantile_q7</code>: 0.72 vs 0.77 for the 90% intervals, while the teacher over-covers (0.96).</li>
+<li>The largest gap is at 1h (524 vs 275 MW). Without distillation, the lag difference features and the residual target get 1h down to 320 MW and close 65% of the average MAE gap (747 MW).</li>
+</ul>
+<p><img src="bars.png" alt="Absolute metrics by horizon" /></p>
+<p><img src="differences.png" alt="Paired differences vs hgb_quantile_q7" /></p>
+<p><img src="coverage_width.png" alt="Coverage vs width" /></p>
+<p><img src="reliability.png" alt="Reliability" /></p>
+<p><img src="pareto.png" alt="Accuracy vs fit + predict time" /></p>
+<p><img src="timeseries.png" alt="True vs predicted load, two weeks of January 2025" /></p>
+<h2 id="why-the-paper-recipe-does-not-transfer-here">Why the paper recipe does not transfer here</h2>
+<p><code>scripts/teacher_diagnostics.py</code> compares the teacher predictions on the test rows, on its own (in-context) training rows, on blocked out-of-fold training rows, and on the CutMix queries. Averages over the 8 evaluation folds (<a href="teacher_diagnostics.json">teacher_diagnostics.json</a>):</p>
+<table>
+<thead>
+<tr class="header">
+<th>horizon</th>
+<th style="text-align: right;">test MAE</th>
+<th style="text-align: right;">test width 90</th>
+<th style="text-align: right;">test cov 90</th>
+<th style="text-align: right;">in-context train MAE</th>
+<th style="text-align: right;">in-context width 90</th>
+<th style="text-align: right;">in-context cov 90</th>
+<th style="text-align: right;">out-of-fold train MAE</th>
+<th style="text-align: right;">out-of-fold width 90</th>
+<th style="text-align: right;">out-of-fold cov 90</th>
+<th style="text-align: right;">CutMix width 90</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1h</td>
+<td style="text-align: right;">275</td>
+<td style="text-align: right;">1577</td>
+<td style="text-align: right;">0.924</td>
+<td style="text-align: right;">51</td>
+<td style="text-align: right;">494</td>
+<td style="text-align: right;">0.998</td>
+<td style="text-align: right;">319</td>
+<td style="text-align: right;">1717</td>
+<td style="text-align: right;">0.917</td>
+<td style="text-align: right;">15765</td>
+</tr>
+<tr class="even">
+<td>12h</td>
+<td style="text-align: right;">827</td>
+<td style="text-align: right;">5029</td>
+<td style="text-align: right;">0.973</td>
+<td style="text-align: right;">35</td>
+<td style="text-align: right;">405</td>
+<td style="text-align: right;">1.000</td>
+<td style="text-align: right;">1074</td>
+<td style="text-align: right;">5254</td>
+<td style="text-align: right;">0.947</td>
+<td style="text-align: right;">18933</td>
+</tr>
+<tr class="odd">
+<td>24h</td>
+<td style="text-align: right;">955</td>
+<td style="text-align: right;">6289</td>
+<td style="text-align: right;">0.981</td>
+<td style="text-align: right;">35</td>
+<td style="text-align: right;">391</td>
+<td style="text-align: right;">1.000</td>
+<td style="text-align: right;">1245</td>
+<td style="text-align: right;">6330</td>
+<td style="text-align: right;">0.945</td>
+<td style="text-align: right;">18613</td>
+</tr>
+</tbody>
+</table>
+<p><img src="teacher_width.png" alt="Teacher 90% interval width on test, train and CutMix rows" /></p>
+<ol type="1">
+<li><strong>The teacher memorizes its context rows.</strong> With the full training set as context, Kumo-Tabular returns almost the label of each training row: median error 35-51 MW and intervals 4 to 16 times narrower than on test rows. The paper's teacher is a tabular foundation model on i.i.d. data. Here the neighbours of a training row one hour apart are in the context with their labels, while at test time the closest context row is at least 7 days away. Real-row teacher targets are therefore close to the labels for the median and much too narrow for the tails.</li>
+<li><strong>CutMix queries are far off the data manifold.</strong> Mixing features of two random hours produces load lags, rolling statistics, weather forecasts and calendar columns that do not belong to one coherent time point. The teacher answers with very wide intervals (16-19k MW, 3 to 10 times the test width). Once they get half of the training weight, these targets widen the student's tails, but in regions that the test rows do not visit.</li>
+<li><strong>Out-of-fold teacher predictions do look like test predictions.</strong> <code>scripts/gen_teacher_oof.py</code> cuts each training set into 4 contiguous blocks. It predicts each block with a context that excludes the block and 7 days on each side of it, which mimics the test-time gap. Their error, width and coverage match the test statistics (table above). This makes them better targets for the real rows. A full CV run with these targets is in progress.</li>
+</ol>
+<p>Two more structured query generators were run as teachers on fold 0 to check point 2: CutMix over feature groups (lags, weather, calendar) and CutMix of two rows at most 72 h apart. They reduce the teacher width on synthetic rows to 5.5-8.5k MW, which is still 1.5 to 3.5 times the test width.</p>
+<h2 id="fold-0-horizon-1h-probes">Fold 0, horizon 1h probes</h2>
+<p>Students fitted on fold 0 at 1h (2,184 test rows; teacher MAE 368 MW) with the default student hyper-parameters. Predictions are in <code>results/raw/probe</code>.</p>
+<table>
+<thead>
+<tr class="header">
+<th>student</th>
+<th>real-row targets</th>
+<th style="text-align: right;">synthetic ratio</th>
+<th>residual target</th>
+<th style="text-align: right;">MAE</th>
+<th style="text-align: right;">pinball q7</th>
+<th style="text-align: right;">cov 90</th>
+<th style="text-align: right;">width 90</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>labels, pinball loss</td>
+<td>labels</td>
+<td style="text-align: right;">0</td>
+<td>no</td>
+<td style="text-align: right;">567</td>
+<td style="text-align: right;">198</td>
+<td style="text-align: right;">0.68</td>
+<td style="text-align: right;">1533</td>
+</tr>
+<tr class="even">
+<td>labels, pinball loss</td>
+<td>labels</td>
+<td style="text-align: right;">0</td>
+<td>yes</td>
+<td style="text-align: right;">605</td>
+<td style="text-align: right;">218</td>
+<td style="text-align: right;">0.60</td>
+<td style="text-align: right;">1230</td>
+</tr>
+<tr class="odd">
+<td>KD</td>
+<td>in-context teacher</td>
+<td style="text-align: right;">0</td>
+<td>no</td>
+<td style="text-align: right;">563</td>
+<td style="text-align: right;">226</td>
+<td style="text-align: right;">0.41</td>
+<td style="text-align: right;">633</td>
+</tr>
+<tr class="even">
+<td>KD</td>
+<td>in-context teacher</td>
+<td style="text-align: right;">1</td>
+<td>no</td>
+<td style="text-align: right;">569</td>
+<td style="text-align: right;">183</td>
+<td style="text-align: right;">0.79</td>
+<td style="text-align: right;">1882</td>
+</tr>
+<tr class="odd">
+<td>KD</td>
+<td>in-context teacher</td>
+<td style="text-align: right;">2</td>
+<td>no</td>
+<td style="text-align: right;">571</td>
+<td style="text-align: right;">188</td>
+<td style="text-align: right;">0.76</td>
+<td style="text-align: right;">1772</td>
+</tr>
+<tr class="even">
+<td>KD</td>
+<td>in-context teacher</td>
+<td style="text-align: right;">4</td>
+<td>no</td>
+<td style="text-align: right;">562</td>
+<td style="text-align: right;">184</td>
+<td style="text-align: right;">0.76</td>
+<td style="text-align: right;">1808</td>
+</tr>
+<tr class="odd">
+<td>KD</td>
+<td>in-context teacher</td>
+<td style="text-align: right;">0</td>
+<td>yes</td>
+<td style="text-align: right;">600</td>
+<td style="text-align: right;">253</td>
+<td style="text-align: right;">0.39</td>
+<td style="text-align: right;">526</td>
+</tr>
+<tr class="even">
+<td>KD</td>
+<td>in-context teacher</td>
+<td style="text-align: right;">2</td>
+<td>yes</td>
+<td style="text-align: right;">547</td>
+<td style="text-align: right;">181</td>
+<td style="text-align: right;">0.75</td>
+<td style="text-align: right;">1654</td>
+</tr>
+<tr class="odd">
+<td>KD</td>
+<td>out-of-fold teacher</td>
+<td style="text-align: right;">0</td>
+<td>no</td>
+<td style="text-align: right;">585</td>
+<td style="text-align: right;">195</td>
+<td style="text-align: right;">0.71</td>
+<td style="text-align: right;">1593</td>
+</tr>
+<tr class="even">
+<td>KD</td>
+<td>out-of-fold teacher</td>
+<td style="text-align: right;">2</td>
+<td>no</td>
+<td style="text-align: right;">576</td>
+<td style="text-align: right;">176</td>
+<td style="text-align: right;">0.86</td>
+<td style="text-align: right;">2329</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>With in-context targets and no synthetic rows, the student learns the memorized, collapsed intervals (90% coverage 0.41). CutMix rows mostly act as a source of width: the ratio barely changes the median MAE (562-571 MW) and improves the pinball loss mainly by widening the tails.</li>
+<li>Out-of-fold real-row targets fix the collapse on their own (coverage 0.71). Combined with CutMix 2:1 they give the best pinball loss of the probes (176 vs 198 MW for the label-trained model).</li>
+<li>None of the students gets close to the teacher's 368 MW median error on this fold. On the full CV, the lag-difference features reduce the 1h error much more than teacher supervision does (320 vs 524 MW).</li>
+</ul>
+
+</main>
+</body>
+</html>
