@@ -16,15 +16,18 @@
 <main>
 <h1 id="distilling-kumo-tabular-into-histgradientboosting-quantile-models">Distilling Kumo-Tabular into HistGradientBoosting quantile models</h1>
 <p>Electricity load forecasting benchmark of <a href="https://github.com/probabl-ai/skore-example-electricity-load">probabl-ai/skore-example-electricity-load</a> (walk-forward CV with forecast weather, 8 folds of 13 weeks, horizons 1h / 12h / 24h). The question: can a family of scikit-learn <code>HistGradientBoostingRegressor</code> models, distilled from Kumo-Tabular with the CutMix recipe of <a href="https://arxiv.org/html/2610.01435">arXiv:2610.01435</a>, close the gap between <code>hgb_quantile_q7</code> and <code>kumo_tabular</code>? And does post-hoc calibration help on top?</p>
-<p>Status: intermediate results. The runs listed under "In progress" are still training.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>Distillation does not close the gap. The paper recipe (squared-error students on the teacher's 7 quantiles, CutMix at a 2:1 synthetic-to-real ratio, no ground-truth labels) moves average MAE from 859 MW to 847 MW, against 686 MW for the teacher. Two properties of this forecasting setup break the recipe: the teacher memorizes the training rows it sees as context, and CutMix of two random hours falls off the data manifold. Replacing the memorized targets with blocked out-of-fold teacher predictions fixes the collapsed intervals and makes the median worse.</p>
+<p>The gain that does show up comes from the features, with no teacher involved. Differences of the load lags, and a residual target relative to the last observed load, bring a label-trained HGB to 747 MW. Leaving the median alone and shifting the other quantiles from the previous 4 folds then puts its 90% coverage at 0.91 and its 7-level pinball loss at 232 MW, against 213 MW for the teacher. Distilling on top of those same features is worse than training them on the labels.</p>
+<p>One combination was stopped before it finished: out-of-fold teacher targets together with the lag-difference features (6 of 12 folds done). It is not in the tables.</p>
 <h2 id="iterations">Iterations</h2>
 <ol type="1">
 <li><a href="01-reproduction/index.html">Reproduction of <code>kumo_tabular</code> and <code>hgb_quantile_q7</code></a> on an AWS L4 GPU.</li>
-<li><a href="02-distillation/index.html">Distillation into HGB students</a>: the paper recipe, teacher diagnostics and single-fold probes.</li>
-<li><a href="03-calibration/index.html">Post-hoc calibration</a> from past out-of-fold predictions.</li>
+<li><a href="02-distillation/index.html">Distillation into HGB students</a>: the paper recipe, real rows only, out-of-fold targets, lag-difference features, and the teacher diagnostics.</li>
+<li><a href="03-calibration/index.html">Post-hoc calibration</a> from the predictions of the 4 preceding walk-forward folds.</li>
 </ol>
-<h2 id="consolidated-metrics-so-far">Consolidated metrics so far</h2>
-<p>Pooled over the 8 evaluation folds. MAE and width in MW; "pinball q7" is the mean pinball loss over the 7 levels and 3 horizons. Lower is better except for d2 (higher is better) and coverage (target 0.90).</p>
+<h2 id="consolidated-metrics">Consolidated metrics</h2>
+<p>Pooled over the 8 evaluation folds. MAE and width in MW. "pinball q7" is the mean pinball loss over the 7 levels and 3 horizons. Lower is better except for d2 (higher is better) and coverage (target 0.90).</p>
 <table>
 <thead>
 <tr class="header">
@@ -33,7 +36,6 @@
 <th style="text-align: right;">MAE 1h</th>
 <th style="text-align: right;">MAE 12h</th>
 <th style="text-align: right;">MAE 24h</th>
-<th style="text-align: right;">pinball 5/50/95 avg</th>
 <th style="text-align: right;">pinball q7 avg</th>
 <th style="text-align: right;">d2 pinball avg</th>
 <th style="text-align: right;">cov 90 avg</th>
@@ -47,19 +49,17 @@
 <td style="text-align: right;">534</td>
 <td style="text-align: right;">1001</td>
 <td style="text-align: right;">1042</td>
-<td style="text-align: right;">244</td>
 <td style="text-align: right;">278</td>
 <td style="text-align: right;">0.8595</td>
 <td style="text-align: right;">0.766</td>
 <td style="text-align: right;">2987</td>
 </tr>
 <tr class="even">
-<td>kumo_tabular_q7 (teacher run)</td>
+<td>kumo_tabular_q7 (teacher)</td>
 <td style="text-align: right;">686</td>
 <td style="text-align: right;">275</td>
 <td style="text-align: right;">827</td>
 <td style="text-align: right;">955</td>
-<td style="text-align: right;">190</td>
 <td style="text-align: right;">213</td>
 <td style="text-align: right;">0.8918</td>
 <td style="text-align: right;">0.959</td>
@@ -71,31 +71,72 @@
 <td style="text-align: right;">524</td>
 <td style="text-align: right;">969</td>
 <td style="text-align: right;">1049</td>
-<td style="text-align: right;">241</td>
 <td style="text-align: right;">273</td>
 <td style="text-align: right;">0.8625</td>
 <td style="text-align: right;">0.719</td>
 <td style="text-align: right;">2584</td>
 </tr>
 <tr class="even">
-<td>KD CutMix 2:1 + constant shift, median kept</td>
-<td style="text-align: right;">852</td>
-<td style="text-align: right;">524</td>
+<td>KD real rows only</td>
+<td style="text-align: right;">846</td>
+<td style="text-align: right;">510</td>
 <td style="text-align: right;">976</td>
-<td style="text-align: right;">1055</td>
-<td style="text-align: right;">232</td>
-<td style="text-align: right;">267</td>
-<td style="text-align: right;">0.8712</td>
-<td style="text-align: right;">0.888</td>
-<td style="text-align: right;">3963</td>
+<td style="text-align: right;">1053</td>
+<td style="text-align: right;">341</td>
+<td style="text-align: right;">0.7876</td>
+<td style="text-align: right;">0.387</td>
+<td style="text-align: right;">956</td>
 </tr>
 <tr class="odd">
-<td>hgb_q7 + lag diffs + residual</td>
+<td>KD real rows only + constant shift, median kept</td>
+<td style="text-align: right;">848</td>
+<td style="text-align: right;">510</td>
+<td style="text-align: right;">976</td>
+<td style="text-align: right;">1059</td>
+<td style="text-align: right;">266</td>
+<td style="text-align: right;">0.8705</td>
+<td style="text-align: right;">0.902</td>
+<td style="text-align: right;">3810</td>
+</tr>
+<tr class="even">
+<td>KD out-of-fold targets, CutMix 2:1</td>
+<td style="text-align: right;">905</td>
+<td style="text-align: right;">544</td>
+<td style="text-align: right;">1031</td>
+<td style="text-align: right;">1139</td>
+<td style="text-align: right;">275</td>
+<td style="text-align: right;">0.8628</td>
+<td style="text-align: right;">0.942</td>
+<td style="text-align: right;">5256</td>
+</tr>
+<tr class="odd">
+<td>KD lag diffs + residual, CutMix 2:1</td>
+<td style="text-align: right;">763</td>
+<td style="text-align: right;">371</td>
+<td style="text-align: right;">897</td>
+<td style="text-align: right;">1019</td>
+<td style="text-align: right;">253</td>
+<td style="text-align: right;">0.8699</td>
+<td style="text-align: right;">0.662</td>
+<td style="text-align: right;">2085</td>
+</tr>
+<tr class="even">
+<td>KD lag diffs + residual, CutMix 2:1 + constant shift, median kept</td>
+<td style="text-align: right;">765</td>
+<td style="text-align: right;">371</td>
+<td style="text-align: right;">901</td>
+<td style="text-align: right;">1022</td>
+<td style="text-align: right;">240</td>
+<td style="text-align: right;">0.8857</td>
+<td style="text-align: right;">0.886</td>
+<td style="text-align: right;">3438</td>
+</tr>
+<tr class="odd">
+<td>hgb_q7 + lag diffs + residual (labels)</td>
 <td style="text-align: right;">747</td>
 <td style="text-align: right;">320</td>
 <td style="text-align: right;">913</td>
 <td style="text-align: right;">1008</td>
-<td style="text-align: right;">216</td>
 <td style="text-align: right;">245</td>
 <td style="text-align: right;">0.8742</td>
 <td style="text-align: right;">0.763</td>
@@ -107,7 +148,6 @@
 <td style="text-align: right;">320</td>
 <td style="text-align: right;">913</td>
 <td style="text-align: right;">1008</td>
-<td style="text-align: right;">205</td>
 <td style="text-align: right;">232</td>
 <td style="text-align: right;">0.8854</td>
 <td style="text-align: right;">0.911</td>
@@ -115,27 +155,6 @@
 </tr>
 </tbody>
 </table>
-<h2 id="findings-so-far">Findings so far</h2>
-<ul>
-<li>Both models are reproduced: <code>hgb_quantile_q7</code> exactly (MAE 859.0 MW), and <code>kumo_tabular</code> within its ensemble's run-to-run noise (683 vs 688 MW published).</li>
-<li>The paper's distillation recipe (squared-error students on teacher quantiles only, CutMix 2:1) closes only 7% of the MAE gap and 8% of the q7 pinball gap. It also makes the under-coverage worse (0.72).</li>
-<li>The recipe assumes a teacher whose training-row predictions look like its test predictions, and queries on the data manifold. Neither holds here:
-<ul>
-<li>The teacher memorizes its in-context training rows (35-51 MW error, intervals 4 to 16 times narrower than on test rows).</li>
-<li>CutMix of two random hours yields incoherent rows on which the teacher is 3 to 10 times wider than on test rows.</li>
-<li>Blocked out-of-fold teacher predictions match the test statistics. They gave the best fold-0 probe, and a full run is in progress.</li>
-</ul></li>
-<li>The largest gain so far does not come from distillation but from features. Lag differences and a residual target relative to the last observed load close 65% of the MAE gap (747 MW), most of it at 1h (320 vs 534 MW).</li>
-<li>Calibration from past folds helps the under-covering HGB models when the median is left untouched: 90% coverage reaches 0.88-0.91 and the q7 pinball loss drops by 4-13 MW. Shifting the median always hurts, and calibrating the over-covering teacher does not help.</li>
-</ul>
-<h2 id="in-progress">In progress</h2>
-<ul>
-<li><code>KD real rows only</code>: in-context teacher targets, no synthetic rows.</li>
-<li><code>hgb_q7 (this pipeline)</code>: label-trained baseline on all 12 folds, needed to calibrate it.</li>
-<li><code>KD lag diffs + residual, CutMix 2:1</code>.</li>
-<li><code>KD out-of-fold targets, CutMix 2:1</code> and <code>KD lag diffs + residual, out-of-fold targets, CutMix 2:1</code>.</li>
-<li>Calibration of the runs above.</li>
-</ul>
 
 </main>
 </body>
