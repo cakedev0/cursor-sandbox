@@ -173,8 +173,27 @@ fold_list = args.folds if args.folds is not None else folds.fold_ids()
 # same order as the teacher generation (outer folds first)
 fold_list = sorted(fold_list, key=lambda f: (f < 0, f))
 fold_preds, rows, all_rows = {}, [], []
+full_horizons = tuple(args.horizons) == folds.HORIZONS
 for fold in fold_list:
+    ckpt = args.output_dir / f"{args.name}_fold{fold}.parquet"
+    timing_path = ckpt.with_suffix(".json")
+    if ckpt.exists() and full_horizons:
+        saved = pl.read_parquet(ckpt)
+        all_rows.append(saved)
+        if fold >= 0:
+            fold_preds.update(
+                {
+                    (fold, h): saved.filter(pl.col("horizon") == h)
+                    .select([f"q_{q}" for q in folds.QUANTILES])
+                    .to_numpy()
+                    for h in folds.HORIZONS
+                }
+            )
+            rows.append({"split": fold} | json.loads(timing_path.read_text()))
+        print(f"{args.name} fold {fold}: loaded {ckpt.name}", flush=True)
+        continue
     fit_time = score_time = teacher_time = 0.0
+    fold_rows = []
     for h in args.horizons:
         d = folds.fold_data(fold, h) | {"fold": fold}
         X, T, w, teacher_dt = training_set(d, h)
@@ -196,7 +215,7 @@ for fold in fold_list:
             f"teacher {teacher_dt:.0f}s n_iter={n_iters} MAE {mae:.1f}",
             flush=True,
         )
-        all_rows.append(
+        fold_rows.append(
             pl.DataFrame(
                 {
                     "fold": fold,
@@ -207,16 +226,19 @@ for fold in fold_list:
                 | {f"q_{q}": pred[:, i] for i, q in enumerate(folds.QUANTILES)}
             )
         )
+    fold_frame = pl.concat(fold_rows)
+    timing = {
+        "fit_time": fit_time + teacher_time,
+        "score_time": score_time,
+        "student_fit_time": fit_time,
+        "teacher_time": teacher_time,
+    }
+    if full_horizons:
+        fold_frame.write_parquet(ckpt)
+        timing_path.write_text(json.dumps(timing))
+    all_rows.append(fold_frame)
     if fold >= 0:
-        rows.append(
-            {
-                "split": fold,
-                "fit_time": fit_time + teacher_time,
-                "score_time": score_time,
-                "student_fit_time": fit_time,
-                "teacher_time": teacher_time,
-            }
-        )
+        rows.append({"split": fold} | timing)
 
 pl.concat(all_rows).write_parquet(args.output_dir / f"{args.name}_all_folds.parquet")
 if all(f in fold_list for f in range(folds.n_folds())) and len(args.horizons) == 3:
