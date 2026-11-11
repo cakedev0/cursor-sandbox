@@ -18,6 +18,15 @@ execution, TF32 disabled, three seeds, and a 60-second worker limit.
 
 ## Latest results
 
+[024](024-cupy-kmeans-plusplus-and-lloyd/index.html) measures k-means++ and Lloyd
+iterations written with CuPy array operations only, and with CUDA kernels that CuPy
+compiles at run time, against cuML 26.10 on an L4. With the kernels, a full fit
+(`n_init=10`, `max_iter=100`) is 1.7x to 2.6x faster than cuML on 128- to 512-dimensional
+embeddings, and ~6x faster on 1M × 3 data. With array operations only, it is 1.15x to 1.5x
+faster, except at d=3 where it is 1.4x slower. Most of the gain comes from k-means++, which
+is 3.5x to 3.8x faster than cuML's with the kernels and 1.6x to 2.8x faster with array
+operations.
+
 [023](023-dpnp-array-api/index.html) adds the portable array-API path on dpnp
 GPU arrays to the [022](022-intel-arc-xpu/index.html) Arc B390 measurements.
 022 holds PyTorch XPU (native and one-hot), PyTorch CPU, stock scikit-learn
@@ -64,3 +73,4 @@ Main conclusions:
 - [021 — device-resident cuML on the original five tasks](021-device-resident-cuml-five-tasks/index.html): the same placement protocol as 020, applied to the cuML cells that 015 timed from host memory.
 - [022 — PyTorch XPU on Arc B390](022-intel-arc-xpu/index.html): the six-task mix on an Intel Arc B390, with PyTorch CPU, stock scikit-learn 1.9.1, and cakedev0 on the same laptop.
 - [023 — dpnp array API on Arc B390](023-dpnp-array-api/index.html): the portable one-hot update on dpnp GPU arrays, beside the 022 measurements.
+- [024: k-means++ and Lloyd in CuPy](024-cupy-kmeans-plusplus-and-lloyd/index.html): CuPy array operations against JIT CUDA kernels, both against cuML, for the initialization, Lloyd iterations, and full fits.
