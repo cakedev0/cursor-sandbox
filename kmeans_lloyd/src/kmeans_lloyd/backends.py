@@ -60,6 +60,29 @@ def native_accumulate(X, n_clusters):
     return None
 
 
+def native_kmeans_plusplus(X, n_clusters):
+    """Return the fused CuPy k-means++ initializer for ``X``, or None.
+
+    It takes float32 CuPy arrays narrow enough for its shared-memory candidate
+    tile (see :mod:`kmeans_lloyd.cupy_plusplus`); everything else keeps the
+    portable :func:`kmeans_lloyd.iteration.kmeans_plusplus`.
+    """
+    if not _ENABLED or not is_cupy_array(X):
+        return None
+    import cupy
+
+    from kmeans_lloyd.cupy_plusplus import (
+        default_n_local_trials,
+        fused_supported,
+        kmeans_plusplus_cupy_fused,
+    )
+
+    n_trials = default_n_local_trials(n_clusters)
+    if X.dtype != cupy.float32 or not fused_supported(int(X.shape[1]), n_trials):
+        return None
+    return kmeans_plusplus_cupy_fused
+
+
 def _torch_accumulate(X, labels, n_clusters):
     import torch
 

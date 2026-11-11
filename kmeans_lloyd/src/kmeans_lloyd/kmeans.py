@@ -19,7 +19,7 @@ from sklearn.utils._array_api import check_same_namespace
 from sklearn.utils._param_validation import Interval, StrOptions
 from sklearn.utils.validation import check_is_fitted, validate_data
 
-from kmeans_lloyd.backends import native_accumulate
+from kmeans_lloyd.backends import native_accumulate, native_kmeans_plusplus
 from kmeans_lloyd.iteration import assign_gemm_tiled, fit_lloyd, inertia, kmeans_plusplus
 
 
@@ -247,7 +247,8 @@ class KMeans(
     def _initialize(self, X, rng):
         xp = array_namespace(X)
         if isinstance(self.init, str) and self.init == "k-means++":
-            return kmeans_plusplus(X, int(self.n_clusters), rng)[0]
+            plusplus = native_kmeans_plusplus(X, int(self.n_clusters)) or kmeans_plusplus
+            return plusplus(X, int(self.n_clusters), rng)[0]
         if isinstance(self.init, str):
             indices = xp.asarray(
                 rng.choice(int(X.shape[0]), size=int(self.n_clusters), replace=False),
